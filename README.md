@@ -52,7 +52,7 @@ jobs:
         with:
           fetch-depth: 0          # required for incremental sync (restore-mtime)
 
-      - uses: Pilarj-dev/lftp-ftps-deploy@v1
+      - uses: PilarJ/lftp-ftps-deploy@v1
         with:
           server: ${{ secrets.FTP_SERVER }}        # ftp.example.com (no protocol)
           username: ${{ secrets.FTP_USERNAME }}
@@ -73,7 +73,7 @@ Hukot's FTP host is `ftp.whX.hukot.net`, but the certificate is a
 `*.hukot.net` wildcard (one level), so:
 
 ```yaml
-      - uses: Pilarj-dev/lftp-ftps-deploy@v1
+      - uses: PilarJ/lftp-ftps-deploy@v1
         with:
           server: ${{ secrets.FTP_SERVER }}        # ftp.wh1.hukot.net
           username: ${{ secrets.FTP_USERNAME }}
@@ -106,7 +106,7 @@ Hukot's FTP host is `ftp.whX.hukot.net`, but the certificate is a
 - Certificate **and** hostname verification stay enabled by default;
   `insecure-tls` exists only as an explicit, loudly-warned escape hatch.
 - Pin this action to a commit SHA if you want supply-chain guarantees:
-  `uses: Pilarj-dev/lftp-ftps-deploy@<sha> # v1`.
+  `uses: PilarJ/lftp-ftps-deploy@<sha> # v1`.
 
 ## License
 
