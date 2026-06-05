@@ -1,0 +1,173 @@
+name: lftp FTPS Deploy
+description: >-
+  Incremental FTPS deploy via lftp. Works with servers that require TLS
+  session reuse on the data channel (common with ProFTPD on shared
+  hosting), where the libraries behind other FTP deploy actions fail with
+  ECONNRESET. Keeps certificate AND hostname verification enabled.
+author: Jakub Pilař
+branding:
+  icon: upload-cloud
+  color: orange
+
+inputs:
+  server:
+    description: FTP host, no protocol prefix (e.g. ftp.example.com)
+    required: true
+  username:
+    description: FTP login
+    required: true
+  password:
+    description: FTP password
+    required: true
+  server-dir:
+    description: Remote target directory, MUST end with a slash (e.g. /www/)
+    required: true
+  local-dir:
+    description: Local directory to mirror (default = repo root)
+    required: false
+    default: '.'
+  cert-host:
+    description: >-
+      Hostname the server certificate actually covers, if different from
+      `server`. Example: the cert is a one-level wildcard *.hosting.tld
+      while the FTP host is ftp.srv1.hosting.tld (RFC 6125 — the wildcard
+      cannot match two levels). The server's IP is aliased to this name in
+      /etc/hosts and the connection targets it, so hostname verification
+      stays ENABLED instead of being switched off.
+    required: false
+    default: ''
+  ca-file:
+    description: >-
+      CA bundle for chain verification. Defaults to the bundled Let's
+      Encrypt bundle (ISRG Root X1 + intermediates R10–R14), which also
+      fixes servers that send a leaf-only certificate chain.
+    required: false
+    default: ''
+  exclude:
+    description: >-
+      Newline-separated lftp mirror -x regexes, matched against paths
+      relative to local-dir.
+    required: false
+    default: |
+      ^\.git
+      ^\.github/
+  restore-mtime:
+    description: >-
+      Restore per-file commit times before mirroring so --only-newer
+      uploads only really-changed files (CI checkouts stamp everything
+      with checkout time). Requires actions/checkout with fetch-depth: 0.
+    required: false
+    default: 'true'
+  parallel:
+    description: Number of parallel transfers
+    required: false
+    default: '4'
+  insecure-tls:
+    description: 'DANGER: disable TLS certificate verification (MITM risk). Last resort only.'
+    required: false
+    default: 'false'
+  debug:
+    description: Verbose lftp protocol log (debug 3) for troubleshooting
+    required: false
+    default: 'false'
+
+runs:
+  using: composite
+  steps:
+    - name: Install lftp (and git-restore-mtime)
+      shell: bash
+      env:
+        RESTORE_MTIME: ${{ inputs.restore-mtime }}
+      run: |
+        pkgs="lftp"
+        if [ "$RESTORE_MTIME" = "true" ]; then
+          pkgs="$pkgs git-restore-mtime"
+        fi
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq $pkgs
+
+    - name: Restore file mtimes from git history
+      shell: bash
+      env:
+        RESTORE_MTIME: ${{ inputs.restore-mtime }}
+      run: |
+        if [ "$RESTORE_MTIME" != "true" ]; then
+          exit 0
+        fi
+        if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+          echo "::warning title=lftp-ftps-deploy::Shallow clone — every file gets HEAD's date. Use actions/checkout with fetch-depth: 0 for a truly incremental sync."
+        fi
+        git restore-mtime || echo "::warning title=lftp-ftps-deploy::git restore-mtime failed (not a git checkout?) — falling back to checkout times"
+
+    - name: Deploy via lftp (explicit FTPS with TLS session reuse)
+      shell: bash
+      env:
+        FTP_SERVER: ${{ inputs.server }}
+        FTP_USERNAME: ${{ inputs.username }}
+        FTP_PASSWORD: ${{ inputs.password }}
+        FTP_SERVER_DIR: ${{ inputs.server-dir }}
+        LOCAL_DIR: ${{ inputs.local-dir }}
+        CERT_HOST: ${{ inputs.cert-host }}
+        CA_FILE: ${{ inputs.ca-file }}
+        EXCLUDES: ${{ inputs.exclude }}
+        PARALLEL: ${{ inputs.parallel }}
+        INSECURE_TLS: ${{ inputs.insecure-tls }}
+        LFTP_DEBUG: ${{ inputs.debug }}
+        ACTION_PATH: ${{ github.action_path }}
+      run: |
+        # defense-in-depth: mask even if the secret leaks via tool output
+        echo "::add-mask::$FTP_PASSWORD"
+
+        if [ -z "$CA_FILE" ]; then
+          CA_FILE="$ACTION_PATH/lets-encrypt-ca.pem"
+        fi
+
+        # Optional hostname alias: connect to the name the certificate
+        # covers so hostname verification can stay ON.
+        connect_host="$FTP_SERVER"
+        if [ -n "$CERT_HOST" ]; then
+          ip=$(getent ahostsv4 "$FTP_SERVER" | awk '{print $1; exit}')
+          if [ -z "$ip" ]; then
+            echo "::error title=lftp-ftps-deploy::Cannot resolve FTP server hostname"
+            exit 1
+          fi
+          echo "$ip $CERT_HOST" | sudo tee -a /etc/hosts > /dev/null
+          connect_host="$CERT_HOST"
+        fi
+
+        # credentials via .netrc so they never appear on a command line
+        printf 'machine %s\nlogin %s\npassword %s\n' \
+          "$connect_host" "$FTP_USERNAME" "$FTP_PASSWORD" > ~/.netrc
+        chmod 600 ~/.netrc
+
+        # newline-separated exclude regexes -> mirror -x arguments
+        xargs_str=""
+        while IFS= read -r rx; do
+          if [ -n "$rx" ]; then
+            xargs_str="$xargs_str -x '$rx'"
+          fi
+        done <<< "$EXCLUDES"
+
+        {
+          if [ "$LFTP_DEBUG" = "true" ]; then
+            echo "debug 3"
+          fi
+          if [ "$INSECURE_TLS" = "true" ]; then
+            echo "set ssl:verify-certificate false"
+          fi
+          echo "set cmd:fail-exit true"
+          echo "set ftp:ssl-force true"
+          echo "set ftp:ssl-protect-data true"
+          echo "set ssl:ca-file \"$CA_FILE\""
+          echo "set net:max-retries 2"
+          echo "set net:timeout 30"
+          echo "open \"$connect_host\""
+          echo "mirror -R --only-newer --parallel=$PARALLEL --verbose $xargs_str \"$LOCAL_DIR\" \"$FTP_SERVER_DIR\""
+          echo "bye"
+        } > "$RUNNER_TEMP/lftp-deploy-script"
+
+        if [ "$INSECURE_TLS" = "true" ]; then
+          echo "::warning title=lftp-ftps-deploy::TLS certificate verification DISABLED for this run (explicit opt-in). Fix the server certificate instead of relying on this."
+        fi
+
+        lftp -f "$RUNNER_TEMP/lftp-deploy-script"
