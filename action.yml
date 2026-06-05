@@ -1,9 +1,7 @@
 name: lftp FTPS Deploy
 description: >-
-  Incremental FTPS deploy via lftp. Works with servers that require TLS
-  session reuse on the data channel (common with ProFTPD on shared
-  hosting), where the libraries behind other FTP deploy actions fail with
-  ECONNRESET. Keeps certificate AND hostname verification enabled.
+  Incremental FTPS deploy via lftp for servers requiring TLS session
+  reuse, with certificate verification kept enabled.
 author: Jakub Pilař
 branding:
   icon: upload-cloud
