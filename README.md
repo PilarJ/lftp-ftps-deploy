@@ -33,6 +33,10 @@ The mirror deliberately runs **without `--delete`** — it will never remove
 remote files, so deploying into a directory that also contains an existing
 application (e.g. a PrestaShop installation) is safe.
 
+If lftp gives up with `mirror: Fatal error: max-retries exceeded` (flaky
+shared hosting), the action restarts the mirror — up to 3 attempts total.
+Thanks to `--only-newer` each rerun continues where the previous one died.
+
 ## Usage
 
 ```yaml
@@ -96,6 +100,7 @@ Hukot's FTP host is `ftp.whX.hukot.net`, but the certificate is a
 | `exclude` | | `.git`, `.github` | Newline-separated lftp `-x` regexes (relative paths) |
 | `restore-mtime` | | `true` | Per-file commit dates for incremental sync (needs `fetch-depth: 0`) |
 | `parallel` | | `4` | Parallel transfers |
+| `max-retries` | | `2` | lftp `net:max-retries`; on "max-retries exceeded" the whole mirror restarts (max 3 attempts) |
 | `insecure-tls` | | `false` | ⚠️ Disable cert verification (MITM risk, last resort) |
 | `debug` | | `false` | Verbose lftp protocol log |
 

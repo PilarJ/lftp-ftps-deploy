@@ -60,6 +60,13 @@ inputs:
     description: Number of parallel transfers
     required: false
     default: '4'
+  max-retries:
+    description: >-
+      lftp net:max-retries — per-operation retry limit. When the mirror
+      still dies with "Fatal error: max-retries exceeded", the whole
+      (incremental) mirror is restarted, up to 3 attempts total.
+    required: false
+    default: '2'
   insecure-tls:
     description: 'DANGER: disable TLS certificate verification (MITM risk). Last resort only.'
     required: false
@@ -109,12 +116,18 @@ runs:
         CA_FILE: ${{ inputs.ca-file }}
         EXCLUDES: ${{ inputs.exclude }}
         PARALLEL: ${{ inputs.parallel }}
+        MAX_RETRIES: ${{ inputs.max-retries }}
         INSECURE_TLS: ${{ inputs.insecure-tls }}
         LFTP_DEBUG: ${{ inputs.debug }}
         ACTION_PATH: ${{ github.action_path }}
       run: |
         # defense-in-depth: mask even if the secret leaks via tool output
         echo "::add-mask::$FTP_PASSWORD"
+
+        if ! [[ "$MAX_RETRIES" =~ ^[0-9]+$ ]]; then
+          echo "::error title=lftp-ftps-deploy::max-retries must be a non-negative integer, got: $MAX_RETRIES"
+          exit 1
+        fi
 
         if [ -z "$CA_FILE" ]; then
           CA_FILE="$ACTION_PATH/lets-encrypt-ca.pem"
@@ -157,7 +170,7 @@ runs:
           echo "set ftp:ssl-force true"
           echo "set ftp:ssl-protect-data true"
           echo "set ssl:ca-file \"$CA_FILE\""
-          echo "set net:max-retries 2"
+          echo "set net:max-retries $MAX_RETRIES"
           echo "set net:timeout 30"
           echo "open \"$connect_host\""
           echo "mirror -R --only-newer --parallel=$PARALLEL --verbose $xargs_str \"$LOCAL_DIR\" \"$FTP_SERVER_DIR\""
@@ -168,4 +181,22 @@ runs:
           echo "::warning title=lftp-ftps-deploy::TLS certificate verification DISABLED for this run (explicit opt-in). Fix the server certificate instead of relying on this."
         fi
 
-        lftp -f "$RUNNER_TEMP/lftp-deploy-script"
+        # Restart the whole mirror when lftp gives up with "max-retries
+        # exceeded" — thanks to --only-newer the rerun continues where the
+        # previous attempt died instead of starting over.
+        max_attempts=3
+        attempt=1
+        while true; do
+          rc=0
+          lftp -f "$RUNNER_TEMP/lftp-deploy-script" 2>&1 \
+            | tee "$RUNNER_TEMP/lftp-deploy-log" || rc=$?
+          if [ "$rc" -eq 0 ]; then
+            break
+          fi
+          if [ "$attempt" -ge "$max_attempts" ] \
+             || ! grep -q 'Fatal error: max-retries exceeded' "$RUNNER_TEMP/lftp-deploy-log"; then
+            exit "$rc"
+          fi
+          echo "::warning title=lftp-ftps-deploy::mirror died with max-retries exceeded (attempt $attempt/$max_attempts) — restarting incremental mirror"
+          attempt=$((attempt + 1))
+        done
