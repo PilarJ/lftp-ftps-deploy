@@ -17,8 +17,10 @@ Error: Client is closed because read ECONNRESET (data socket)
 with imperfect TLS setups:
 
 - **Leaf-only chains**: servers that don't send their intermediate certificate
-  fail verification with "issuer unknown". The bundled CA file (ISRG Root X1 +
-  Let's Encrypt intermediates R10–R14) completes the chain.
+  fail verification with "issuer unknown". The bundled CA file completes the
+  chain: ISRG Root X1, intermediates R10–R14, and — since Let's Encrypt
+  started issuing from its new root — YR2 plus the X1-cross-signed
+  ISRG Root YR.
 - **Wildcard one level up**: when the cert covers `*.hosting.tld` but the FTP
   host is `ftp.srv1.hosting.tld` (which a wildcard cannot match per RFC 6125),
   set `cert-host: srv1.hosting.tld` — the action aliases the server IP to that

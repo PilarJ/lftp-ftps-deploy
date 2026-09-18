@@ -37,8 +37,9 @@ inputs:
   ca-file:
     description: >-
       CA bundle for chain verification. Defaults to the bundled Let's
-      Encrypt bundle (ISRG Root X1 + intermediates R10–R14), which also
-      fixes servers that send a leaf-only certificate chain.
+      Encrypt bundle (ISRG Root X1 + intermediates R10–R14, plus YR2 and
+      the X1-cross-signed ISRG Root YR), which also fixes servers that
+      send a leaf-only certificate chain.
     required: false
     default: ''
   exclude:
