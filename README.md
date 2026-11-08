@@ -19,8 +19,12 @@ with imperfect TLS setups:
 - **Leaf-only chains**: servers that don't send their intermediate certificate
   fail verification with "issuer unknown". The bundled CA file completes the
   chain: ISRG Root X1, intermediates R10–R14, and — since Let's Encrypt
-  started issuing from its new root — YR2 plus the X1-cross-signed
-  ISRG Root YR.
+  started issuing from its new root — all Generation Y intermediates
+  (YR1–YR3 RSA, YE1–YE3 ECDSA, active and backup) plus the cross-signed
+  roots they chain through (Root YR by X1, Root YE by X2, X2 by X1). Let's
+  Encrypt picks the issuing intermediate per certificate, so a renewal can
+  switch between them; with only one in the bundle the next renewal could
+  break a leaf-only server again.
 - **Wildcard one level up**: when the cert covers `*.hosting.tld` but the FTP
   host is `ftp.srv1.hosting.tld` (which a wildcard cannot match per RFC 6125),
   set `cert-host: srv1.hosting.tld` — the action aliases the server IP to that
